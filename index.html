@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>槓桿組合比對</title>
+<style>
+:root {
+  --bg: #eef0f2; --card: #ffffff; --text: #1d2a2e; --muted: #64757b; --line: #d9dfe2;
+  --accent: #0f5f66; --accent-text: #ffffff; --accent-soft: #dcefef;
+  --danger: #c0392b; --danger-soft: #fbe5e2; --input: #f7f9fa;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12181a; --card: #1b2427; --text: #e4ecee; --muted: #8fa3a8; --line: #2c393d;
+    --accent: #3cc3c9; --accent-text: #08282b; --accent-soft: #1f3d40;
+    --danger: #ff7a6b; --danger-soft: #45201c; --input: #121a1c;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", sans-serif; }
+.wrap { max-width: 960px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 20px; margin: 4px 0 12px; }
+h2 { font-size: 16px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+.tab { flex: 1; padding: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 10px; font-size: 15px; cursor: pointer; }
+.tab.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
+.row { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; align-items: end; padding: 10px 0; border-top: 1px solid var(--line); }
+.row:first-of-type { border-top: 0; }
+.f { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.f > span { font-size: 12px; color: var(--muted); }
+input, select { width: 100%; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--input); color: var(--text); font: inherit; }
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.val { padding: 8px 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.btn { padding: 8px 14px; border: 1px solid var(--accent); background: var(--accent); color: var(--accent-text); border-radius: 8px; font: inherit; cursor: pointer; }
+.btn.ghost { background: transparent; color: var(--accent); }
+.btn.del { border-color: var(--line); color: var(--muted); background: transparent; padding: 8px 10px; }
+.btn:disabled { opacity: .5; cursor: default; }
+.bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.hint { font-size: 12px; color: var(--muted); margin: 2px 0 0; }
+.err { color: var(--danger); font-weight: 600; }
+.warn { background: var(--danger-soft); color: var(--danger); border-radius: 8px; padding: 6px 8px; font-weight: 600; }
+.ok { color: var(--accent); font-weight: 600; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.stat { background: var(--accent-soft); border-radius: 10px; padding: 10px 12px; }
+.stat small { display: block; color: var(--muted); font-size: 12px; }
+.stat b { font-size: 18px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.slider { display: flex; align-items: center; gap: 12px; }
+.slider input[type=range] { padding: 0; accent-color: var(--accent); flex: 1; }
+.fx { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); margin-bottom: 12px; flex-wrap: wrap; }
+.fx input { width: 90px; }
+.badge { font-size: 12px; background: var(--accent-soft); color: var(--accent); border-radius: 6px; padding: 1px 6px; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>槓桿組合比對</h1>
+  <div class="tabs" id="tabs"></div>
+  <div class="fx">
+    <span>美元匯率（美股換算台幣）1 USD =</span>
+    <input type="number" id="fx" step="any" min="0">
+    <span>TWD</span>
+    <span id="status"></span>
+  </div>
+  <div id="main"></div>
+  <p class="hint">資料只存在你這台裝置的瀏覽器（localStorage），不會上傳到伺服器。報價僅供參考，非投資建議。</p>
+</div>
+
+<script>
+'use strict';
+const KEY = 'leverage-combo-v1';
+const NAMES = ['A', 'B', 'C'];
+const DEBT_TYPES = ['信貸', '房貸', '券商質押', '其他'];
+
+const newPortfolio = () => ({ h: [], d: [], alarm: 130, drop: 10 });
+let S = load();
+
+function load() {
+  try {
+    const s = JSON.parse(localStorage.getItem(KEY));
+    if (s && s.P) return s;
+  } catch (e) { /* 無法讀取就用預設 */ }
+  return { active: 'A', fx: 32, P: { A: newPortfolio(), B: newPortfolio(), C: newPortfolio() } };
+}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* 忽略 */ } }
+const cur = () => S.P[S.active];
+
+// ---------- 小工具 ----------
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') e.className = v;
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else if (k === 'value') e.value = v;
+    else e.setAttribute(k, v);
+  }
+  kids.flat().forEach(c => { if (c != null && c !== false) e.append(c); });
+  return e;
+}
+const field = (label, node) => el('label', { class: 'f' }, el('span', {}, label), node);
+const num = v => (v === '' || v == null || isNaN(Number(v))) ? 0 : Number(v);
+const fmt = (n, d = 0) => Number.isFinite(n) ? n.toLocaleString('zh-TW', { maximumFractionDigits: d, minimumFractionDigits: d }) : '—';
+const twd = n => 'NT$ ' + fmt(n);
+
+// ---------- 計算 ----------
+function currencyFactor(c) {
+  if (c === 'TWD') return 1;
+  if (c === 'USD') return num(S.fx) || 0;
+  return null;
+}
+
+function calcHolding(h) {
+  if (!h.sym) return { st: 'empty' };
+  if (!h.q || h.q.in !== h.sym) return { st: 'pending' };
+  if (h.q.err) return { st: 'err' };
+  const f = currencyFactor(h.q.currency);
+  if (f === null) return { st: 'err', msg: '不支援幣別 ' + h.q.currency };
+  const mv = num(h.shares) * h.q.price * f;
+  return { st: 'ok', name: h.q.name, price: h.q.price, cur: h.q.currency, mv, beta: h.q.beta, fb: h.q.fb };
+}
+
+// 本息平均攤還；期數留空則只算利息
+function monthlyPayment(d) {
+  const P = num(d.amt), r = num(d.rate) / 100 / 12, n = Math.round(num(d.n));
+  if (P <= 0) return 0;
+  if (n <= 0) return P * r;
+  if (r === 0) return P / n;
+  const g = Math.pow(1 + r, n);
+  return P * r * g / (g - 1);
+}
+
+function compute(p) {
+  const hs = p.h.map(calcHolding);
+  let assets = 0, wb = 0;
+  hs.forEach(c => { if (c.st === 'ok') { assets += c.mv; wb += c.mv * c.beta; } });
+  const debts = p.d.map(d => {
+    const pay = monthlyPayment(d);
+    let pledgeValue = null, ratio = null;
+    if (d.type === '券商質押') {
+      const idx = p.h.findIndex(h => h.sym && h.sym === d.pSym);
+      const c = idx >= 0 ? hs[idx] : null;
+      if (c && c.st === 'ok') {
+        pledgeValue = num(d.pShares) * c.price * currencyFactor(c.cur);
+        if (num(d.amt) > 0) ratio = pledgeValue / num(d.amt) * 100;
+      }
+    }
+    return { pay, pledgeValue, ratio };
+  });
+  const liab = p.d.reduce((s, d) => s + num(d.amt), 0);
+  const net = assets - liab;
+  return {
+    hs, debts, assets, liab, net,
+    leverage: net > 0 ? assets / net : null,
+    beta: assets > 0 ? wb / assets : null,
+    monthly: debts.reduce((s, x) => s + x.pay, 0),
+  };
+}
+
+// ---------- 畫面 ----------
+let refs = {};
+
+function renderTabs() {
+  const box = document.getElementById('tabs');
+  box.replaceChildren(...NAMES.map(n => el('button', {
+    class: 'tab' + (n === S.active ? ' on' : ''),
+    onclick: () => { S.active = n; save(); renderAll(); },
+  }, '組合 ' + n)));
+}
+
+function renderAll() {
+  renderTabs();
+  document.getElementById('fx').value = S.fx;
+  const p = cur();
+  refs = { h: [], d: [] };
+
+  const holdBox = el('div');
+  const debtBox = el('div');
+  refs.holdBox = holdBox; refs.debtBox = debtBox;
+
+  const main = document.getElementById('main');
+  main.replaceChildren(
+    el('div', { class: 'card' },
+      el('h2', {}, '持股'),
+      holdBox,
+      el('div', { class: 'bar' },
+        el('button', { class: 'btn ghost', onclick: () => { p.h.push({ sym: '', shares: '', lev: 1 }); save(); renderHoldings(); } }, '＋ 新增持股'),
+        refs.updBtn = el('button', { class: 'btn', onclick: updateQuotes }, '更新報價')),
+      el('p', { class: 'hint' }, '台股直接輸入代碼（0050、00675L），美股輸入如 QQQM。槓桿倍數僅作標示；槓桿型 ETF 的 Beta 已含槓桿，不會再乘一次。')),
+    el('div', { class: 'card' },
+      el('h2', {}, '負債'),
+      debtBox,
+      el('div', { class: 'bar' },
+        el('button', { class: 'btn ghost', onclick: () => { p.d.push({ type: '信貸', bank: '', amt: '', rate: '', n: '', pSym: '', pShares: '' }); save(); renderDebts(); } }, '＋ 新增負債')),
+      el('p', { class: 'hint' }, '每月攤還採本息平均攤還；期數留空則只算每月利息。券商質押維持率 ＝ 質押股票市值 ÷ 借款金額。'),
+      el('div', { class: 'bar' },
+        field('維持率警戒線（%）', el('input', { type: 'number', step: 'any', value: p.alarm, oninput: e => { p.alarm = num(e.target.value); save(); refresh(); } })))),
+    el('div', { class: 'card' },
+      el('h2', {}, '結果（組合 ' + S.active + '）'),
+      refs.stats = el('div', { class: 'stats' }),
+      refs.note = el('p', { class: 'hint' })),
+    el('div', { class: 'card' },
+      el('h2', {}, '大盤下跌模擬'),
+      el('div', { class: 'slider' },
+        el('input', { type: 'range', min: 0, max: 30, step: 1, value: p.drop, oninput: e => { p.drop = num(e.target.value); save(); refresh(); } }),
+        refs.dropLabel = el('b', {})),
+      refs.dropOut = el('div', { class: 'stats', style: 'margin-top:10px' }),
+      el('p', { class: 'hint' }, '淨值變動 ＝ 總資產 × Beta × 跌幅 ÷ 淨值。總資產先扣掉負債後才除以淨值，所以借越多、風險越大。')));
+  renderHoldings();
+  renderDebts();
+}
+
+function renderHoldings() {
+  const p = cur();
+  refs.h = [];
+  refs.holdBox.replaceChildren(...p.h.map((h, i) => {
+    const r = {};
+    refs.h[i] = r;
+    return el('div', { class: 'row' },
+      field('代碼', el('input', { value: h.sym, placeholder: '0050', autocapitalize: 'characters',
+        oninput: e => { h.sym = e.target.value.trim().toUpperCase(); save(); refresh(); },
+        onchange: () => renderDebts() })),
+      field('股數', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: h.shares,
+        oninput: e => { h.shares = e.target.value; save(); refresh(); } })),
+      field('槓桿倍數（標示）', el('select', { onchange: e => { h.lev = Number(e.target.value); save(); } },
+        ...[1, 2].map(v => el('option', { value: v, ...(h.lev === v ? { selected: '' } : {}) }, v + ' 倍')))),
+      field('名稱', r.name = el('div', { class: 'val' })),
+      field('現價', r.price = el('div', { class: 'val' })),
+      field('市值（台幣）', r.mv = el('div', { class: 'val' })),
+      field('Beta', r.beta = el('div', { class: 'val' })),
+      el('button', { class: 'btn del', title: '刪除', onclick: () => { p.h.splice(i, 1); save(); renderAll(); } }, '✕'));
+  }));
+  refresh();
+}
+
+function renderDebts() {
+  const p = cur();
+  refs.d = [];
+  const symOptions = [...new Set(p.h.map(h => h.sym).filter(Boolean))];
+  refs.debtBox.replaceChildren(...p.d.map((d, i) => {
+    const r = {};
+    refs.d[i] = r;
+    const isPledge = d.type === '券商質押';
+    const upd = (k, isNum = true) => e => { d[k] = e.target.value; save(); refresh(); };
+    return el('div', { class: 'row' },
+      field('類型', el('select', { onchange: e => { d.type = e.target.value; save(); renderDebts(); } },
+        ...DEBT_TYPES.map(t => el('option', { value: t, ...(d.type === t ? { selected: '' } : {}) }, t)))),
+      field('銀行 / 券商', el('input', { value: d.bank, placeholder: '名稱', oninput: e => { d.bank = e.target.value; save(); } })),
+      field('借款金額', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: d.amt, oninput: upd('amt') })),
+      field('年利率（%）', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: d.rate, oninput: upd('rate') })),
+      field('期數（月）', el('input', { type: 'number', inputmode: 'numeric', step: 1, min: 0, value: d.n, oninput: upd('n') })),
+      isPledge && field('質押標的', el('select', { onchange: upd('pSym') },
+        el('option', { value: '' }, '— 選擇持股 —'),
+        ...symOptions.map(s => el('option', { value: s, ...(d.pSym === s ? { selected: '' } : {}) }, s)))),
+      isPledge && field('質押股數', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: d.pShares, oninput: upd('pShares') })),
+      field('每月本利攤還', r.pay = el('div', { class: 'val' })),
+      isPledge && field('維持率', r.ratio = el('div', { class: 'val' })),
+      el('button', { class: 'btn del', title: '刪除', onclick: () => { p.d.splice(i, 1); save(); renderAll(); } }, '✕'));
+  }));
+  refresh();
+}
+
+// 只更新計算出來的數字，不重建輸入框（避免打字時失去焦點）
+function refresh() {
+  const p = cur();
+  const c = compute(p);
+
+  c.hs.forEach((x, i) => {
+    const r = refs.h[i];
+    if (!r) return;
+    r.name.className = r.price.className = r.mv.className = r.beta.className = 'val';
+    if (x.st === 'ok') {
+      r.name.textContent = x.name;
+      r.price.textContent = fmt(x.price, 2) + ' ' + x.cur;
+      r.mv.textContent = twd(x.mv);
+      r.beta.textContent = fmt(x.beta, 3) + (x.fb ? '（預設）' : '');
+    } else {
+      r.name.textContent = x.st === 'err' ? (x.msg || '查無資料') : x.st === 'pending' ? '尚未更新報價' : '';
+      if (x.st === 'err') r.name.className = 'val err';
+      r.price.textContent = r.mv.textContent = r.beta.textContent = '—';
+    }
+  });
+
+  c.debts.forEach((x, i) => {
+    const r = refs.d[i];
+    if (!r) return;
+    r.pay.textContent = twd(x.pay);
+    if (r.ratio) {
+      if (x.ratio == null) {
+        r.ratio.className = 'val';
+        r.ratio.textContent = '需先選標的並更新報價';
+      } else {
+        const low = x.ratio < num(p.alarm);
+        r.ratio.className = low ? 'val warn' : 'val ok';
+        r.ratio.textContent = fmt(x.ratio, 1) + '%' + (low ? ' ⚠ 低於警戒 ' + fmt(num(p.alarm), 0) + '%' : '');
+      }
+    }
+  });
+
+  const stat = (label, value) => el('div', { class: 'stat' }, el('small', {}, label), el('b', {}, value));
+  refs.stats.replaceChildren(
+    stat('總資產', twd(c.assets)),
+    stat('總負債', twd(c.liab)),
+    stat('組合淨值', twd(c.net)),
+    stat('實際槓桿', c.leverage == null ? '—' : fmt(c.leverage, 2) + ' 倍'),
+    stat('總資產 Beta（市值加權）', c.beta == null ? '—' : fmt(c.beta, 3)),
+    stat('每月本利攤還', twd(c.monthly)));
+  const bad = c.hs.filter(x => x.st === 'err').length;
+  const pend = c.hs.filter(x => x.st === 'pending').length;
+  refs.note.textContent = (bad ? bad + ' 檔查無資料，未列入計算。' : '') + (pend ? pend + ' 檔尚未更新報價。' : '') +
+    (c.net <= 0 && c.assets > 0 ? '淨值 ≤ 0，槓桿無法計算。' : '');
+
+  // 下跌拉桿
+  const drop = num(p.drop) / 100;
+  refs.dropLabel.textContent = '大盤下跌 ' + fmt(num(p.drop), 0) + '%';
+  refs.dropOut.replaceChildren();
+  if (c.beta == null || c.net <= 0) {
+    refs.dropOut.append(el('div', { class: 'hint' }, c.net <= 0 && c.assets > 0 ? '淨值 ≤ 0，無法模擬。' : '請先輸入持股並更新報價。'));
+  } else {
+    const loss = c.assets * c.beta * drop; // 資產損失金額（負債不變）
+    const pct = loss / c.net * 100;
+    const after = c.net - loss;
+    refs.dropOut.append(
+      stat('淨值變動', (loss > 0 ? '−' : '') + fmt(pct, 1) + '%'),
+      stat('資產損失', loss > 0 ? '−' + twd(loss) : twd(0)),
+      stat('下跌後淨值', after < 0 ? '⚠ ' + twd(after) : twd(after)));
+  }
+}
+
+// ---------- 報價 ----------
+async function updateQuotes() {
+  const p = cur();
+  const syms = [...new Set(p.h.map(h => h.sym).filter(Boolean))];
+  const status = document.getElementById('status');
+  if (!syms.length) { status.textContent = '請先輸入代碼'; return; }
+  refs.updBtn.disabled = true;
+  status.textContent = '更新中…';
+  try {
+    const r = await fetch('/api/quote?symbols=' + encodeURIComponent(syms.join(',')));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    const bySym = {};
+    (data.results || []).forEach(x => { bySym[x.symbol] = x; });
+    p.h.forEach(h => {
+      if (!h.sym) return;
+      const x = bySym[h.sym];
+      if (!x || x.error || !(x.price > 0)) h.q = { in: h.sym, err: true };
+      else h.q = { in: h.sym, name: x.name, price: x.price, currency: x.currency, beta: x.beta == null ? 1 : x.beta, fb: !!x.betaFallback };
+    });
+    if (data.usdtwd > 0) S.fx = Number(data.usdtwd.toFixed(3));
+    save();
+    status.textContent = '已更新 ' + new Date().toLocaleTimeString('zh-TW');
+    renderAll();
+  } catch (e) {
+    status.textContent = '更新失敗，請稍後再試';
+  } finally {
+    if (refs.updBtn) refs.updBtn.disabled = false;
+  }
+}
+
+document.getElementById('fx').addEventListener('input', e => { S.fx = e.target.value; save(); refresh(); });
+renderAll();
+</script>
+</body>
+</html>
