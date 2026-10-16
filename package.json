@@ -1,5 +1,5 @@
 {
   "name": "leverage-combination",
   "private": true,
-  "engines": { "node": "20.x" }
+  "engines": { "node": "24.x" }
 }
