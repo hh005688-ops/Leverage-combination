@@ -1,7 +1,8 @@
 // Vercel 函式：GET /api/quote?symbols=0050,00675L,QQQM
 // 向 Yahoo Finance 抓約 250 個交易日收盤價，對 ^GSPC 算 Beta（邏輯同 GAS「核心計算.js」）。
 
-const BENCH = '^GSPC';
+const BENCH_TW = '^TWII'; // 台股（.TW / .TWO）對照台灣加權指數
+const BENCH_US = '^GSPC'; // 其餘（美股）對照標普 500
 const DAYS = 250;
 const MAX_SYMBOLS = 30;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -191,6 +192,9 @@ function covariance(a, b) {
 
 function variance(a) { return covariance(a, a); }
 
+// 依 Yahoo 解析後的代碼決定基準指數
+const benchmarkFor = (resolved) => /\.(TW|TWO)$/.test(resolved) ? BENCH_TW : BENCH_US;
+
 // 依日期對齊後算 Beta = 共變異數 ÷ 大盤變異數；對齊不足 10 筆或大盤無波動時回 1.0（同 GAS）
 function alignedBeta(stock, bench) {
   const map = new Map();
@@ -214,9 +218,9 @@ module.exports = async (req, res) => {
   if (symbols.length === 0) return res.status(400).json({ error: '請提供 symbols 參數，例如 ?symbols=0050,QQQM' });
   if (symbols.length > MAX_SYMBOLS) return res.status(400).json({ error: '一次最多 ' + MAX_SYMBOLS + ' 檔' });
 
-  let bench = null;
-  let benchError = null;
-  try { bench = await fetchHistory(BENCH); } catch (e) { benchError = '大盤基準抓取失敗'; }
+  // 基準指數：同一次請求內每個指數最多只抓一次（Promise 快取，並行的各檔共用）
+  const benchCache = {};
+  const getBench = (id) => benchCache[id] || (benchCache[id] = fetchHistory(id).catch(() => null));
 
   // 美元匯率（美股換算台幣用），抓不到就回 null，由前端手動輸入
   let usdtwd = null;
@@ -242,7 +246,7 @@ module.exports = async (req, res) => {
     try { s = await fetchWithFallback(sym); } catch (e) { if (!official || !official.close) return { symbol: sym, error: '查無資料' }; }
 
     // Yahoo 抓不到但官方有收盤價：先顯示名稱與價格，Beta 用預設 1.0
-    if (!s) return { symbol: sym, name: official.name, nameSource: 'official', price: official.close, currency: 'TWD', beta: 1.0, betaFallback: true };
+    if (!s) return { symbol: sym, name: official.name, nameSource: 'official', price: official.close, currency: 'TWD', beta: 1.0, betaFallback: true, benchmark: BENCH_TW };
 
     // 名稱優先順序：官方中文名單 → Yahoo 中文 → Yahoo 英文
     let name = s.name, nameSource = 'yahoo-en';
@@ -253,13 +257,15 @@ module.exports = async (req, res) => {
       if (z.name) { name = z.name; nameSource = 'yahoo-zh'; }
     }
 
-    const out = { symbol: sym, resolved: s.symbol, name, nameSource, price: s.price, currency: s.currency, beta: null };
+    const benchmark = benchmarkFor(s.symbol);
+    const bench = await getBench(benchmark);
+    const out = { symbol: sym, resolved: s.symbol, name, nameSource, price: s.price, currency: s.currency, beta: null, benchmark };
     if (bench) {
       const b = alignedBeta(s, bench);
       out.beta = b.beta;
       out.betaFallback = b.fallback;
     } else {
-      out.error = benchError;
+      out.error = '基準指數 ' + benchmark + ' 抓取失敗';
     }
     return out;
   }));
@@ -269,4 +275,4 @@ module.exports = async (req, res) => {
   res.status(200).json(body);
 };
 
-module.exports._test = { alignedBeta, TW_RE };
+module.exports._test = { alignedBeta, benchmarkFor, TW_RE };

@@ -50,6 +50,7 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
 .slider input[type=range] { padding: 0; accent-color: var(--accent); flex: 1; }
 .fx { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); margin-bottom: 12px; flex-wrap: wrap; }
 .fx input { width: 90px; }
+.sub { font-size: 11px; color: var(--muted); display: block; }
 .mini { width: auto; padding: 2px 4px; font-size: 12px; margin-left: 6px; }
 .badge { font-size: 12px; background: var(--accent-soft); color: var(--accent); border-radius: 6px; padding: 1px 6px; font-weight: 600; }
 </style>
@@ -128,7 +129,7 @@ function calcHolding(h) {
   const mv = num(h.shares) * h.q.price * f;
   const pledged = num(h.pShares) * h.q.price * f;
   const lev = h.ov ? Number(h.ov) : detectLev(h.q.name);
-  return { st: 'ok', name: h.q.name, price: h.q.price, cur: h.q.currency, mv, pledged, lev, beta: h.q.beta, fb: h.q.fb };
+  return { st: 'ok', name: h.q.name, price: h.q.price, cur: h.q.currency, mv, pledged, lev, beta: h.q.beta, fb: h.q.fb, bm: h.q.bm };
 }
 
 // 本息平均攤還；期數留空則只算利息
@@ -280,6 +281,8 @@ function refresh() {
       r.price.textContent = fmt(x.price, 2) + ' ' + x.cur;
       r.mv.textContent = twd(x.mv);
       r.beta.textContent = fmt(x.beta, 3) + (x.fb ? '（預設）' : '');
+      const bmName = x.bm === '^TWII' ? '加權' : x.bm === '^GSPC' ? 'S&P 500' : '';
+      if (bmName) r.beta.append(el('small', { class: 'sub' }, '對照 ' + bmName));
     } else {
       r.name.textContent = x.st === 'err' ? (x.msg || '查無資料') : x.st === 'pending' ? '尚未更新報價' : '';
       if (x.st === 'err') r.name.className = 'val err';
@@ -351,7 +354,7 @@ async function updateQuotes() {
       if (!h.sym) return;
       const x = bySym[h.sym];
       if (!x || x.error || !(x.price > 0)) h.q = { in: h.sym, err: true };
-      else h.q = { in: h.sym, name: x.name, price: x.price, currency: x.currency, beta: x.beta == null ? 1 : x.beta, fb: !!x.betaFallback };
+      else h.q = { in: h.sym, name: x.name, price: x.price, currency: x.currency, beta: x.beta == null ? 1 : x.beta, fb: !!x.betaFallback, bm: x.benchmark };
     });
     if (data.usdtwd > 0) S.fx = Number(data.usdtwd.toFixed(3));
     save();
