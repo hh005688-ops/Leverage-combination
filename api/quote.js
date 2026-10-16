@@ -271,7 +271,8 @@ module.exports = async (req, res) => {
   }));
 
   const body = { usdtwd, twNamesLoaded: twMap.size > 0, results };
-  if (twNamesDebug) body.twNamesDebug = twNamesDebug;
+  // 除錯資訊較大，只有網址加 ?debug=1 才帶
+  if (twNamesDebug && String((req.query && req.query.debug) || '') === '1') body.twNamesDebug = twNamesDebug;
   res.status(200).json(body);
 };
 

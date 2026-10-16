@@ -23,7 +23,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 -app
 h1 { font-size: 20px; margin: 4px 0 12px; }
 h2 { font-size: 16px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
-.tab { flex: 1; padding: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 10px; font-size: 15px; cursor: pointer; }
+.tab { flex: 1; padding: 10px 4px; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 10px; font-size: 15px; cursor: pointer; }
 .tab.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 12px; }
 .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; align-items: end; padding: 10px 0; border-top: 1px solid var(--line); }
@@ -52,6 +52,16 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
 .fx input { width: 90px; }
 .sub { font-size: 11px; color: var(--muted); display: block; }
 .mini { width: auto; padding: 2px 4px; font-size: 12px; margin-left: 6px; }
+.blk { padding-top: 6px; }
+.blk + .blk { border-top: 2px solid var(--line); margin-top: 8px; }
+.blk-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+h3 { font-size: 15px; margin: 0; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.subtotal { font-size: 13px; color: var(--accent); font-weight: 600; font-variant-numeric: tabular-nums; }
+table.cmp { width: 100%; border-collapse: collapse; }
+table.cmp th, table.cmp td { padding: 8px 4px; white-space: nowrap; border-top: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; vertical-align: top; }
+table.cmp th:first-child { white-space: normal; width: 24%; text-align: left; color: var(--muted); font-weight: 400; font-size: 13px; }
+@media (max-width: 520px) { table.cmp { font-size: 12.5px; } .card { padding: 12px 10px; } }
+table.cmp thead th { border-top: 0; color: var(--accent); font-weight: 600; }
 .badge { font-size: 12px; background: var(--accent-soft); color: var(--accent); border-radius: 6px; padding: 1px 6px; font-weight: 600; }
 </style>
 </head>
@@ -74,6 +84,7 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1
 const KEY = 'leverage-combo-v1';
 const NAMES = ['A', 'B', 'C'];
 const DEBT_TYPES = ['信貸', '房貸', '券商質押', '其他'];
+const VIEWS = [...NAMES, 'CMP'];
 
 const newPortfolio = () => ({ h: [], d: [], alarm: 130, drop: 10 });
 let S = load();
@@ -81,9 +92,29 @@ let S = load();
 function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY));
-    if (s && s.P) return s;
+    if (s && s.P) return normalize(s);
   } catch (e) { /* 無法讀取就用預設 */ }
   return { active: 'A', fx: 32, P: { A: newPortfolio(), B: newPortfolio(), C: newPortfolio() } };
+}
+// 舊資料沿用：補上持股所屬市場（台股/美股）；負債的類型欄位本來就有
+function guessMarket(h) {
+  if (h.q && h.q.currency) return h.q.currency === 'TWD' ? 'TW' : 'US';
+  const sym = h.sym || '';
+  if (/^\d{4,6}[A-Z]?$/.test(sym) || /\.TWO?$/.test(sym)) return 'TW';
+  return sym ? 'US' : 'TW';
+}
+function normalize(s) {
+  s.P = s.P || {};
+  NAMES.forEach(n => {
+    const p = s.P[n] = Object.assign(newPortfolio(), s.P[n] || {});
+    if (!Array.isArray(p.h)) p.h = [];
+    if (!Array.isArray(p.d)) p.d = [];
+    p.h.forEach(h => { if (h.m !== 'TW' && h.m !== 'US') h.m = guessMarket(h); });
+    p.d.forEach(d => { if (!DEBT_TYPES.includes(d.type)) d.type = '其他'; });
+  });
+  if (!VIEWS.includes(s.active)) s.active = 'A';
+  if (s.fx == null) s.fx = 32;
+  return s;
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* 忽略 */ } }
 const cur = () => S.P[S.active];
@@ -164,104 +195,126 @@ function compute(p) {
 
 // ---------- 畫面 ----------
 let refs = {};
+const TABS = [...NAMES.map(n => ({ id: n, label: '組合 ' + n })), { id: 'CMP', label: '比對結果' }];
+const HOLD_BLOCKS = [{ m: 'TW', title: '台股', ph: '0050' }, { m: 'US', title: '美股', ph: 'QQQM' }];
+const stat = (label, value) => el('div', { class: 'stat' }, el('small', {}, label), el('b', {}, value));
 
 function renderTabs() {
   const box = document.getElementById('tabs');
-  box.replaceChildren(...NAMES.map(n => el('button', {
-    class: 'tab' + (n === S.active ? ' on' : ''),
-    onclick: () => { S.active = n; save(); renderAll(); },
-  }, '組合 ' + n)));
+  box.replaceChildren(...TABS.map(t => el('button', {
+    class: 'tab' + (t.id === S.active ? ' on' : ''),
+    onclick: () => { S.active = t.id; save(); renderAll(); },
+  }, t.label)));
 }
 
 function renderAll() {
   renderTabs();
   document.getElementById('fx').value = S.fx;
+  if (S.active === 'CMP') renderCompare(); else renderPortfolio();
+}
+
+function renderPortfolio() {
   const p = cur();
-  refs = { h: [], d: [] };
+  refs = { h: [], d: [], holdBox: {}, debtBox: {}, debtSub: {} };
 
-  const holdBox = el('div');
-  const debtBox = el('div');
-  refs.holdBox = holdBox; refs.debtBox = debtBox;
+  const holdCard = el('div', { class: 'card' }, el('h2', {}, '持股'));
+  HOLD_BLOCKS.forEach(b => {
+    refs.holdBox[b.m] = el('div');
+    holdCard.append(el('div', { class: 'blk' },
+      el('div', { class: 'blk-h' },
+        el('h3', {}, b.title),
+        el('button', { class: 'btn ghost', onclick: () => { p.h.push({ sym: '', shares: '', pShares: '', ov: '', m: b.m }); save(); renderHoldings(); } }, '＋ 新增持股')),
+      refs.holdBox[b.m]));
+  });
+  holdCard.append(
+    el('div', { class: 'bar' }, refs.updBtn = el('button', { class: 'btn', onclick: () => updateQuotes([S.active]) }, '更新報價')),
+    el('p', { class: 'hint' }, '只要輸入代碼與庫存股數（有券商質押再填質押股數），其餘自動帶出。槓桿倍數依標的名稱判斷，判斷錯可用「覆蓋」改；僅作標示，槓桿型 ETF 的 Beta 已含槓桿，不會再乘一次。'));
 
-  const main = document.getElementById('main');
-  main.replaceChildren(
-    el('div', { class: 'card' },
-      el('h2', {}, '持股'),
-      holdBox,
-      el('div', { class: 'bar' },
-        el('button', { class: 'btn ghost', onclick: () => { p.h.push({ sym: '', shares: '', pShares: '', ov: '' }); save(); renderHoldings(); } }, '＋ 新增持股'),
-        refs.updBtn = el('button', { class: 'btn', onclick: updateQuotes }, '更新報價')),
-      el('p', { class: 'hint' }, '只要輸入代碼與庫存股數（有券商質押再填質押股數），其餘自動帶出。槓桿倍數依標的名稱判斷，判斷錯可用「覆蓋」改；僅作標示，槓桿型 ETF 的 Beta 已含槓桿，不會再乘一次。')),
-    el('div', { class: 'card' },
-      el('h2', {}, '負債'),
-      debtBox,
-      el('div', { class: 'bar' },
-        el('button', { class: 'btn ghost', onclick: () => { p.d.push({ type: '信貸', bank: '', amt: '', rate: '', n: '' }); save(); renderDebts(); } }, '＋ 新增負債')),
-      el('p', { class: 'hint' }, '每月攤還採本息平均攤還；期數留空則只算每月利息。券商質押維持率 ＝ 持股區填的質押股票市值 ÷ 券商質押借款金額。'),
-      el('div', { class: 'bar' },
-        field('維持率警戒線（%）', el('input', { type: 'number', step: 'any', value: p.alarm, oninput: e => { p.alarm = num(e.target.value); save(); refresh(); } })))),
-    el('div', { class: 'card' },
-      el('h2', {}, '結果（組合 ' + S.active + '）'),
-      refs.stats = el('div', { class: 'stats' }),
-      refs.note = el('p', { class: 'hint' })),
-    el('div', { class: 'card' },
-      el('h2', {}, '大盤下跌模擬'),
-      el('div', { class: 'slider' },
-        el('input', { type: 'range', min: 0, max: 30, step: 1, value: p.drop, oninput: e => { p.drop = num(e.target.value); save(); refresh(); } }),
-        refs.dropLabel = el('b', {})),
-      refs.dropOut = el('div', { class: 'stats', style: 'margin-top:10px' }),
-      el('p', { class: 'hint' }, '淨值變動 ＝ 總資產 × Beta × 跌幅 ÷ 淨值。總資產先扣掉負債後才除以淨值，所以借越多、風險越大。')));
+  const debtCard = el('div', { class: 'card' }, el('h2', {}, '負債'));
+  DEBT_TYPES.forEach(t => {
+    refs.debtBox[t] = el('div');
+    refs.debtSub[t] = el('span', { class: 'subtotal' });
+    debtCard.append(el('div', { class: 'blk' },
+      el('div', { class: 'blk-h' },
+        el('h3', {}, t, refs.debtSub[t]),
+        el('button', { class: 'btn ghost', onclick: () => { p.d.push({ type: t, bank: '', amt: '', rate: '', n: '' }); save(); renderDebts(); } }, '＋ 新增' + t)),
+      refs.debtBox[t]));
+  });
+  debtCard.append(
+    refs.monthly = el('p', { class: 'hint' }),
+    el('p', { class: 'hint' }, '每月攤還採本息平均攤還；期數留空則只算每月利息。券商質押維持率 ＝ 持股區填的質押股票市值 ÷ 券商質押借款金額。'),
+    el('div', { class: 'bar' },
+      field('維持率警戒線（%）', el('input', { type: 'number', step: 'any', value: p.alarm, oninput: e => { p.alarm = num(e.target.value); save(); refresh(); } }))));
+
+  const dropCard = el('div', { class: 'card' },
+    el('h2', {}, '大盤下跌模擬'),
+    el('div', { class: 'slider' },
+      el('input', { type: 'range', min: 0, max: 30, step: 1, value: p.drop, oninput: e => { p.drop = num(e.target.value); save(); refresh(); } }),
+      refs.dropLabel = el('b', {})),
+    refs.dropOut = el('div', { class: 'stats', style: 'margin-top:10px' }),
+    el('p', { class: 'hint' }, '淨值變動 ＝ 總資產 × Beta × 跌幅 ÷ 淨值。總資產先扣掉負債後才除以淨值，所以借越多、風險越大。'));
+
+  const sumCard = el('div', { class: 'card' },
+    el('h2', {}, '組合 ' + S.active + ' 摘要'),
+    refs.stats = el('div', { class: 'stats' }),
+    refs.note = el('p', { class: 'hint' }));
+
+  document.getElementById('main').replaceChildren(holdCard, debtCard, dropCard, sumCard);
   renderHoldings();
   renderDebts();
+}
+
+function holdingRow(p, h, i, ph) {
+  const r = {};
+  refs.h[i] = r;
+  return el('div', { class: 'row' },
+    field('代碼', el('input', { value: h.sym, placeholder: ph, autocapitalize: 'characters',
+      oninput: e => { h.sym = e.target.value.trim().toUpperCase(); save(); refresh(); } })),
+    field('庫存股數', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: h.shares,
+      oninput: e => { h.shares = e.target.value; save(); refresh(); } })),
+    field('質押股數', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: h.pShares || '',
+      oninput: e => { h.pShares = e.target.value; save(); refresh(); } })),
+    field('標的名稱', r.name = el('div', { class: 'val' })),
+    field('現價', r.price = el('div', { class: 'val' })),
+    field('市值（台幣）', r.mv = el('div', { class: 'val' })),
+    field('權重', r.weight = el('div', { class: 'val' })),
+    field('槓桿倍數', el('div', { class: 'val' }, r.lev = el('b'),
+      el('select', { class: 'mini', title: '手動覆蓋', onchange: e => { h.ov = e.target.value; save(); refresh(); } },
+        el('option', { value: '' }, '自動'),
+        ...[1, 2, 3].map(v => el('option', { value: v, ...(String(h.ov) === String(v) ? { selected: '' } : {}) }, '覆蓋 ' + v + 'x'))))),
+    field('Beta', r.beta = el('div', { class: 'val' })),
+    el('button', { class: 'btn del', title: '刪除', onclick: () => { p.h.splice(i, 1); save(); renderAll(); } }, '✕'));
 }
 
 function renderHoldings() {
   const p = cur();
   refs.h = [];
-  refs.holdBox.replaceChildren(...p.h.map((h, i) => {
-    const r = {};
-    refs.h[i] = r;
-    return el('div', { class: 'row' },
-      field('代碼', el('input', { value: h.sym, placeholder: '0050', autocapitalize: 'characters',
-        oninput: e => { h.sym = e.target.value.trim().toUpperCase(); save(); refresh(); },
-        })),
-      field('庫存股數', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: h.shares,
-        oninput: e => { h.shares = e.target.value; save(); refresh(); } })),
-      field('質押股數', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: h.pShares || '',
-        oninput: e => { h.pShares = e.target.value; save(); refresh(); } })),
-      field('標的名稱', r.name = el('div', { class: 'val' })),
-      field('現價', r.price = el('div', { class: 'val' })),
-      field('市值（台幣）', r.mv = el('div', { class: 'val' })),
-      field('權重', r.weight = el('div', { class: 'val' })),
-      field('槓桿倍數', el('div', { class: 'val' }, r.lev = el('b'),
-        el('select', { class: 'mini', title: '手動覆蓋', onchange: e => { h.ov = e.target.value; save(); refresh(); } },
-          el('option', { value: '' }, '自動'),
-          ...[1, 2, 3].map(v => el('option', { value: v, ...(String(h.ov) === String(v) ? { selected: '' } : {}) }, '覆蓋 ' + v + 'x'))))),
-      field('Beta', r.beta = el('div', { class: 'val' })),
-      el('button', { class: 'btn del', title: '刪除', onclick: () => { p.h.splice(i, 1); save(); renderAll(); } }, '✕'));
-  }));
+  HOLD_BLOCKS.forEach(b => {
+    refs.holdBox[b.m].replaceChildren(...p.h.map((h, i) => h.m === b.m ? holdingRow(p, h, i, b.ph) : null).filter(Boolean));
+  });
   refresh();
+}
+
+function debtRow(p, d, i) {
+  const r = {};
+  refs.d[i] = r;
+  const upd = k => e => { d[k] = e.target.value; save(); refresh(); };
+  return el('div', { class: 'row' },
+    field('銀行 / 券商', el('input', { value: d.bank, placeholder: '名稱', oninput: e => { d.bank = e.target.value; save(); } })),
+    field('借款金額', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: d.amt, oninput: upd('amt') })),
+    field('年利率（%）', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: d.rate, oninput: upd('rate') })),
+    field('期數（月）', el('input', { type: 'number', inputmode: 'numeric', step: 1, min: 0, value: d.n, oninput: upd('n') })),
+    field('每月本利攤還', r.pay = el('div', { class: 'val' })),
+    d.type === '券商質押' && field('維持率（全部質押）', r.ratio = el('div', { class: 'val' })),
+    el('button', { class: 'btn del', title: '刪除', onclick: () => { p.d.splice(i, 1); save(); renderAll(); } }, '✕'));
 }
 
 function renderDebts() {
   const p = cur();
   refs.d = [];
-  refs.debtBox.replaceChildren(...p.d.map((d, i) => {
-    const r = {};
-    refs.d[i] = r;
-    const isPledge = d.type === '券商質押';
-    const upd = (k, isNum = true) => e => { d[k] = e.target.value; save(); refresh(); };
-    return el('div', { class: 'row' },
-      field('類型', el('select', { onchange: e => { d.type = e.target.value; save(); renderDebts(); } },
-        ...DEBT_TYPES.map(t => el('option', { value: t, ...(d.type === t ? { selected: '' } : {}) }, t)))),
-      field('銀行 / 券商', el('input', { value: d.bank, placeholder: '名稱', oninput: e => { d.bank = e.target.value; save(); } })),
-      field('借款金額', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: d.amt, oninput: upd('amt') })),
-      field('年利率（%）', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: d.rate, oninput: upd('rate') })),
-      field('期數（月）', el('input', { type: 'number', inputmode: 'numeric', step: 1, min: 0, value: d.n, oninput: upd('n') })),
-      field('每月本利攤還', r.pay = el('div', { class: 'val' })),
-      isPledge && field('維持率（全部質押）', r.ratio = el('div', { class: 'val' })),
-      el('button', { class: 'btn del', title: '刪除', onclick: () => { p.d.splice(i, 1); save(); renderAll(); } }, '✕'));
-  }));
+  DEBT_TYPES.forEach(t => {
+    refs.debtBox[t].replaceChildren(...p.d.map((d, i) => d.type === t ? debtRow(p, d, i) : null).filter(Boolean));
+  });
   refresh();
 }
 
@@ -306,14 +359,18 @@ function refresh() {
     }
   });
 
-  const stat = (label, value) => el('div', { class: 'stat' }, el('small', {}, label), el('b', {}, value));
+  DEBT_TYPES.forEach(t => {
+    const sum = p.d.filter(d => d.type === t).reduce((s, d) => s + num(d.amt), 0);
+    refs.debtSub[t].textContent = '小計 ' + twd(sum);
+  });
+  refs.monthly.textContent = '每月本利攤還合計：' + twd(c.monthly);
+
   refs.stats.replaceChildren(
     stat('總資產', twd(c.assets)),
     stat('總負債', twd(c.liab)),
     stat('組合淨值', twd(c.net)),
     stat('實際槓桿', fmt(c.leverage, 2) + ' 倍'),
-    stat('總資產 Beta（市值加權）', c.beta == null ? '—' : fmt(c.beta, 3)),
-    stat('每月本利攤還', twd(c.monthly)));
+    stat('總資產 Beta（市值加權）', c.beta == null ? '—' : fmt(c.beta, 3)));
   const bad = c.hs.filter(x => x.st === 'err').length;
   const pend = c.hs.filter(x => x.st === 'pending').length;
   refs.note.textContent = (bad ? bad + ' 檔查無資料，未列入計算。' : '') + (pend ? pend + ' 檔尚未更新報價。' : '') +
@@ -336,10 +393,39 @@ function refresh() {
   }
 }
 
+// ---------- 比對結果 ----------
+function renderCompare() {
+  refs = {};
+  const cols = NAMES.map(n => compute(S.P[n]));
+  const DROP = 0.1;
+  const dropCell = c => {
+    if (c.beta == null || c.net <= 0) return '—';
+    const loss = c.assets * c.beta * DROP;
+    return el('span', {}, (loss > 0 ? '−' : '') + fmt(loss / c.net * 100, 1) + '%',
+      el('small', { class: 'sub' }, (loss > 0 ? '−' : '') + twd(loss)));
+  };
+  const rows = [
+    ['總資產', c => twd(c.assets)],
+    ['總負債', c => twd(c.liab)],
+    ['組合淨值', c => twd(c.net)],
+    ['實際槓桿倍數', c => fmt(c.leverage, 2) + ' 倍'],
+    ['總資產 Beta', c => c.beta == null ? '—' : fmt(c.beta, 3)],
+    ['每月本利攤還', c => twd(c.monthly)],
+    ['大盤下跌 10% 時淨值變動', dropCell],
+  ];
+  document.getElementById('main').replaceChildren(el('div', { class: 'card' },
+    el('h2', {}, '三個組合比對'),
+    el('table', { class: 'cmp' },
+      el('thead', {}, el('tr', {}, el('th', {}, ''), ...NAMES.map(n => el('th', {}, '組合 ' + n)))),
+      el('tbody', {}, ...rows.map(([label, f]) => el('tr', {}, el('th', {}, label), ...cols.map(c => el('td', {}, f(c))))))),
+    el('div', { class: 'bar' }, refs.updBtn = el('button', { class: 'btn', onclick: () => updateQuotes(NAMES) }, '更新三個組合報價')),
+    el('p', { class: 'hint' }, '數字取自各組合最近一次更新的報價；大盤下跌 10% 的算法同組合頁的下跌模擬。')));
+}
+
 // ---------- 報價 ----------
-async function updateQuotes() {
-  const p = cur();
-  const syms = [...new Set(p.h.map(h => h.sym).filter(Boolean))];
+async function updateQuotes(names) {
+  const ps = names.map(n => S.P[n]);
+  const syms = [...new Set(ps.flatMap(p => p.h.map(h => h.sym)).filter(Boolean))];
   const status = document.getElementById('status');
   if (!syms.length) { status.textContent = '請先輸入代碼'; return; }
   refs.updBtn.disabled = true;
@@ -350,12 +436,12 @@ async function updateQuotes() {
     const data = await r.json();
     const bySym = {};
     (data.results || []).forEach(x => { bySym[x.symbol] = x; });
-    p.h.forEach(h => {
+    ps.forEach(p => p.h.forEach(h => {
       if (!h.sym) return;
       const x = bySym[h.sym];
       if (!x || x.error || !(x.price > 0)) h.q = { in: h.sym, err: true };
       else h.q = { in: h.sym, name: x.name, price: x.price, currency: x.currency, beta: x.beta == null ? 1 : x.beta, fb: !!x.betaFallback, bm: x.benchmark };
-    });
+    }));
     if (data.usdtwd > 0) S.fx = Number(data.usdtwd.toFixed(3));
     save();
     status.textContent = '已更新 ' + new Date().toLocaleTimeString('zh-TW');
