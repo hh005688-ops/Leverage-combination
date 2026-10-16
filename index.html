@@ -85,6 +85,7 @@ const KEY = 'leverage-combo-v1';
 const NAMES = ['A', 'B', 'C'];
 const DEBT_TYPES = ['信貸', '房貸', '券商質押', '其他'];
 const VIEWS = [...NAMES, 'CMP'];
+const AMORT_TYPES = ['信貸', '房貸']; // 只有這兩類有期數與每月本利攤還
 
 const newPortfolio = () => ({ h: [], d: [], alarm: 130, drop: 10 });
 let S = load();
@@ -158,7 +159,7 @@ function calcHolding(h) {
   const f = currencyFactor(h.q.currency);
   if (f === null) return { st: 'err', msg: '不支援幣別 ' + h.q.currency };
   const mv = num(h.shares) * h.q.price * f;
-  const pledged = num(h.pShares) * h.q.price * f;
+  const pledged = h.m === 'US' ? 0 : num(h.pShares) * h.q.price * f; // 美股不質押，舊資料殘留的質押股數不計
   const lev = h.ov ? Number(h.ov) : detectLev(h.q.name);
   return { st: 'ok', name: h.q.name, price: h.q.price, cur: h.q.currency, mv, pledged, lev, beta: h.q.beta, fb: h.q.fb, bm: h.q.bm };
 }
@@ -182,7 +183,7 @@ function compute(p) {
   hs.forEach(c => { if (c.st === 'ok') pledgeValue += c.pledged; });
   const pledgeLoan = p.d.filter(d => d.type === '券商質押').reduce((t, d) => t + num(d.amt), 0);
   const ratio = pledgeLoan > 0 && pledgeValue > 0 ? pledgeValue / pledgeLoan * 100 : null;
-  const debts = p.d.map(d => ({ pay: monthlyPayment(d) }));
+  const debts = p.d.map(d => ({ pay: AMORT_TYPES.includes(d.type) ? monthlyPayment(d) : 0 }));
   const liab = p.d.reduce((t, d) => t + num(d.amt), 0);
   const net = assets - liab;
   return {
@@ -242,7 +243,7 @@ function renderPortfolio() {
   });
   debtCard.append(
     refs.monthly = el('p', { class: 'hint' }),
-    el('p', { class: 'hint' }, '每月攤還採本息平均攤還；期數留空則只算每月利息。券商質押維持率 ＝ 持股區填的質押股票市值 ÷ 券商質押借款金額。'),
+    el('p', { class: 'hint' }, '信貸、房貸每月攤還採本息平均攤還，期數留空則只算每月利息；券商質押與其他只記借款金額與利率，不算攤還。券商質押維持率 ＝ 持股區填的質押股票市值 ÷ 券商質押借款金額。'),
     el('div', { class: 'bar' },
       field('維持率警戒線（%）', el('input', { type: 'number', step: 'any', value: p.alarm, oninput: e => { p.alarm = num(e.target.value); save(); refresh(); } }))));
 
@@ -272,7 +273,7 @@ function holdingRow(p, h, i, ph) {
       oninput: e => { h.sym = e.target.value.trim().toUpperCase(); save(); refresh(); } })),
     field('庫存股數', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: h.shares,
       oninput: e => { h.shares = e.target.value; save(); refresh(); } })),
-    field('質押股數', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: h.pShares || '',
+    h.m !== 'US' && field('質押股數', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: h.pShares || '',
       oninput: e => { h.pShares = e.target.value; save(); refresh(); } })),
     field('標的名稱', r.name = el('div', { class: 'val' })),
     field('現價', r.price = el('div', { class: 'val' })),
@@ -299,12 +300,13 @@ function debtRow(p, d, i) {
   const r = {};
   refs.d[i] = r;
   const upd = k => e => { d[k] = e.target.value; save(); refresh(); };
+  const amort = AMORT_TYPES.includes(d.type);
   return el('div', { class: 'row' },
     field('銀行 / 券商', el('input', { value: d.bank, placeholder: '名稱', oninput: e => { d.bank = e.target.value; save(); } })),
     field('借款金額', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: d.amt, oninput: upd('amt') })),
     field('年利率（%）', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: d.rate, oninput: upd('rate') })),
-    field('期數（月）', el('input', { type: 'number', inputmode: 'numeric', step: 1, min: 0, value: d.n, oninput: upd('n') })),
-    field('每月本利攤還', r.pay = el('div', { class: 'val' })),
+    amort && field('期數（月）', el('input', { type: 'number', inputmode: 'numeric', step: 1, min: 0, value: d.n, oninput: upd('n') })),
+    amort && field('每月本利攤還', r.pay = el('div', { class: 'val' })),
     d.type === '券商質押' && field('維持率（全部質押）', r.ratio = el('div', { class: 'val' })),
     el('button', { class: 'btn del', title: '刪除', onclick: () => { p.d.splice(i, 1); save(); renderAll(); } }, '✕'));
 }
@@ -346,7 +348,7 @@ function refresh() {
   c.debts.forEach((x, i) => {
     const r = refs.d[i];
     if (!r) return;
-    r.pay.textContent = twd(x.pay);
+    if (r.pay) r.pay.textContent = twd(x.pay);
     if (r.ratio) {
       if (c.ratio == null) {
         r.ratio.className = 'val';
@@ -363,7 +365,7 @@ function refresh() {
     const sum = p.d.filter(d => d.type === t).reduce((s, d) => s + num(d.amt), 0);
     refs.debtSub[t].textContent = '小計 ' + twd(sum);
   });
-  refs.monthly.textContent = '每月本利攤還合計：' + twd(c.monthly);
+  refs.monthly.textContent = '每月本利攤還合計（信貸＋房貸）：' + twd(c.monthly);
 
   refs.stats.replaceChildren(
     stat('總資產', twd(c.assets)),
@@ -410,7 +412,7 @@ function renderCompare() {
     ['組合淨值', c => twd(c.net)],
     ['實際槓桿倍數', c => fmt(c.leverage, 2) + ' 倍'],
     ['總資產 Beta', c => c.beta == null ? '—' : fmt(c.beta, 3)],
-    ['每月本利攤還', c => twd(c.monthly)],
+    ['每月本利攤還（信貸＋房貸）', c => twd(c.monthly)],
     ['大盤下跌 10% 時淨值變動', dropCell],
   ];
   document.getElementById('main').replaceChildren(el('div', { class: 'card' },
