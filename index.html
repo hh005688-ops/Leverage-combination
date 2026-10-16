@@ -18,6 +18,7 @@
   }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", sans-serif; }
 .wrap { max-width: 960px; margin: 0 auto; padding: 16px; }
 h1 { font-size: 20px; margin: 4px 0 12px; }
@@ -174,6 +175,17 @@ function monthlyPayment(d) {
   return P * r * g / (g - 1);
 }
 
+// 房貸寬限期：總期數含寬限期；寬限期內只繳利息，寬限期後以（總期數 − 寬限期）本息平均攤還。
+// 寬限期留空或 0 時，與一般攤還完全相同。
+function debtPay(d) {
+  const G = Math.round(num(d.g)), N = Math.round(num(d.n));
+  if (d.type !== '房貸' || G <= 0) return { pay: monthlyPayment(d), grace: false, invalid: false };
+  if (G >= N) return { pay: 0, grace: true, invalid: true };
+  const inPay = num(d.amt) * num(d.rate) / 100 / 12;
+  const afterPay = monthlyPayment({ amt: d.amt, rate: d.rate, n: N - G });
+  return { pay: d.phase === 'after' ? afterPay : inPay, grace: true, invalid: false, inPay, afterPay };
+}
+
 function compute(p) {
   const hs = p.h.map(calcHolding);
   let assets = 0, wb = 0;
@@ -183,7 +195,7 @@ function compute(p) {
   hs.forEach(c => { if (c.st === 'ok') pledgeValue += c.pledged; });
   const pledgeLoan = p.d.filter(d => d.type === '券商質押').reduce((t, d) => t + num(d.amt), 0);
   const ratio = pledgeLoan > 0 && pledgeValue > 0 ? pledgeValue / pledgeLoan * 100 : null;
-  const debts = p.d.map(d => ({ pay: AMORT_TYPES.includes(d.type) ? monthlyPayment(d) : 0 }));
+  const debts = p.d.map(d => AMORT_TYPES.includes(d.type) ? debtPay(d) : { pay: 0 });
   const liab = p.d.reduce((t, d) => t + num(d.amt), 0);
   const net = assets - liab;
   return {
@@ -243,7 +255,7 @@ function renderPortfolio() {
   });
   debtCard.append(
     refs.monthly = el('p', { class: 'hint' }),
-    el('p', { class: 'hint' }, '信貸、房貸每月攤還採本息平均攤還，期數留空則只算每月利息；券商質押與其他只記借款金額與利率，不算攤還。券商質押維持率 ＝ 持股區填的質押股票市值 ÷ 券商質押借款金額。'),
+    el('p', { class: 'hint' }, '信貸、房貸每月攤還採本息平均攤還，期數留空則只算每月利息；房貸寬限期內只繳利息（總期數含寬限期），並可選目前所在階段，合計依所選階段計算；券商質押與其他只記借款金額與利率，不算攤還。券商質押維持率 ＝ 持股區填的質押股票市值 ÷ 券商質押借款金額。'),
     el('div', { class: 'bar' },
       field('維持率警戒線（%）', el('input', { type: 'number', step: 'any', value: p.alarm, oninput: e => { p.alarm = num(e.target.value); save(); refresh(); } }))));
 
@@ -306,7 +318,11 @@ function debtRow(p, d, i) {
     field('借款金額', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: d.amt, oninput: upd('amt') })),
     field('年利率（%）', el('input', { type: 'number', inputmode: 'decimal', step: 'any', min: 0, value: d.rate, oninput: upd('rate') })),
     amort && field('期數（月）', el('input', { type: 'number', inputmode: 'numeric', step: 1, min: 0, value: d.n, oninput: upd('n') })),
+    d.type === '房貸' && field('寬限期（月）', el('input', { type: 'number', inputmode: 'numeric', step: 1, min: 0, value: d.g || '', oninput: upd('g') })),
     amort && field('每月本利攤還', r.pay = el('div', { class: 'val' })),
+    d.type === '房貸' && (r.phaseBox = field('目前階段', el('select', { onchange: e => { d.phase = e.target.value; save(); refresh(); } },
+      el('option', { value: 'in' }, '寬限期內'),
+      el('option', { value: 'after', ...(d.phase === 'after' ? { selected: '' } : {}) }, '已過寬限期')))),
     d.type === '券商質押' && field('維持率（全部質押）', r.ratio = el('div', { class: 'val' })),
     el('button', { class: 'btn del', title: '刪除', onclick: () => { p.d.splice(i, 1); save(); renderAll(); } }, '✕'));
 }
@@ -348,7 +364,21 @@ function refresh() {
   c.debts.forEach((x, i) => {
     const r = refs.d[i];
     if (!r) return;
-    if (r.pay) r.pay.textContent = twd(x.pay);
+    if (r.pay) {
+      r.pay.className = 'val';
+      if (x.invalid) {
+        r.pay.className = 'val warn';
+        r.pay.textContent = '寬限期不能大於或等於總期數';
+      } else if (x.grace) {
+        const on = p.d[i].phase === 'after' ? 'after' : 'in';
+        r.pay.replaceChildren(
+          el('div', on === 'in' ? { class: 'ok' } : {}, '寬限期內 ' + twd(x.inPay)),
+          el('div', on === 'after' ? { class: 'ok' } : {}, '寬限期後 ' + twd(x.afterPay)));
+      } else {
+        r.pay.textContent = twd(x.pay);
+      }
+    }
+    if (r.phaseBox) r.phaseBox.hidden = !x.grace;
     if (r.ratio) {
       if (c.ratio == null) {
         r.ratio.className = 'val';
