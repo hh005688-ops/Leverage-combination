@@ -7,6 +7,8 @@ const MAX_SYMBOLS = 30;
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const TW_RE = /^\d{4,6}[A-Z]?$/; // 0050、00675L 這類台股代碼
 const SAFE_RE = /^[A-Z0-9.^=-]{1,15}$/;
+const TWSE_URL = 'https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL'; // 上市
+const TPEX_URL = 'https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes'; // 上櫃
 
 async function fetchHistory(symbol) {
   const period2 = Math.floor(Date.now() / 1000);
@@ -43,6 +45,41 @@ async function fetchHistory(symbol) {
     dates,
     prices,
   };
+}
+
+// 證交所/櫃買中心開放資料：代碼 → 中文名稱與收盤價（Yahoo 對台股常回英文名稱）
+let twCache = { t: 0, map: null };
+
+async function fetchJson(url) {
+  const r = await fetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' }, signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}
+
+function toPrice(v) {
+  const n = Number(String(v == null ? '' : v).replace(/,/g, ''));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+async function loadTwNames() {
+  if (twCache.map && Date.now() - twCache.t < 6 * 3600 * 1000) return twCache.map;
+  const map = new Map();
+  const [a, b] = await Promise.allSettled([fetchJson(TWSE_URL), fetchJson(TPEX_URL)]);
+  if (a.status === 'fulfilled' && Array.isArray(a.value)) {
+    for (const x of a.value) {
+      const code = String(x.Code || '').trim().toUpperCase();
+      if (code && x.Name) map.set(code, { name: String(x.Name).trim(), close: toPrice(x.ClosingPrice) });
+    }
+  }
+  if (b.status === 'fulfilled' && Array.isArray(b.value)) {
+    for (const x of b.value) {
+      const code = String(x.SecuritiesCompanyCode || x.Code || '').trim().toUpperCase();
+      const name = x.CompanyName || x.Name;
+      if (code && name && !map.has(code)) map.set(code, { name: String(name).trim(), close: toPrice(x.Close || x.ClosingPrice) });
+    }
+  }
+  if (map.size) twCache = { t: Date.now(), map };
+  return map;
 }
 
 // 台股先試 .TW，再試 .TWO
@@ -109,25 +146,33 @@ module.exports = async (req, res) => {
   let usdtwd = null;
   try { usdtwd = (await fetchHistory('TWD=X')).price; } catch (e) { /* 忽略 */ }
 
+  // 有台股代碼才去抓證交所/櫃買名單；抓不到就退回 Yahoo 的名稱
+  let twMap = new Map();
+  if (symbols.some(x => TW_RE.test(x))) {
+    try { twMap = await loadTwNames(); } catch (e) { /* 忽略 */ }
+  }
+
   const results = await Promise.all(symbols.map(async (sym) => {
     if (!SAFE_RE.test(sym)) return { symbol: sym, error: '查無資料' };
-    try {
-      const s = await fetchWithFallback(sym);
-      const out = { symbol: sym, resolved: s.symbol, name: s.name, price: s.price, currency: s.currency, beta: null };
-      if (bench) {
-        const b = alignedBeta(s, bench);
-        out.beta = b.beta;
-        out.betaFallback = b.fallback;
-      } else {
-        out.error = benchError;
-      }
-      return out;
-    } catch (e) {
-      return { symbol: sym, error: '查無資料' };
+    const official = TW_RE.test(sym) ? twMap.get(sym) : null;
+    let s = null;
+    try { s = await fetchWithFallback(sym); } catch (e) { if (!official || !official.close) return { symbol: sym, error: '查無資料' }; }
+
+    // Yahoo 抓不到但官方有收盤價：先顯示名稱與價格，Beta 用預設 1.0
+    if (!s) return { symbol: sym, name: official.name, price: official.close, currency: 'TWD', beta: 1.0, betaFallback: true };
+
+    const out = { symbol: sym, resolved: s.symbol, name: official ? official.name : s.name, price: s.price, currency: s.currency, beta: null };
+    if (bench) {
+      const b = alignedBeta(s, bench);
+      out.beta = b.beta;
+      out.betaFallback = b.fallback;
+    } else {
+      out.error = benchError;
     }
+    return out;
   }));
 
-  res.status(200).json({ usdtwd, results });
+  res.status(200).json({ usdtwd, twNamesLoaded: twMap.size > 0, results });
 };
 
 module.exports._test = { alignedBeta, TW_RE };
