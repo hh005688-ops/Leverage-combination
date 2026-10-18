@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>槓桿組合比對</title>
+<title>槓桿工具箱</title>
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -67,20 +67,33 @@ table.cmp th:first-child { white-space: normal; width: 24%; text-align: left; co
 @media (max-width: 520px) { table.cmp { font-size: 12.5px; } .card { padding: 12px 10px; } }
 table.cmp thead th { border-top: 0; color: var(--accent); font-weight: 600; }
 .badge { font-size: 12px; background: var(--accent-soft); color: var(--accent); border-radius: 6px; padding: 1px 6px; font-weight: 600; }
+/* 最上層的工具列：一個工具一顆，之後新增工具會往右排 */
+.toolbar { display: flex; gap: 18px; border-bottom: 1px solid var(--line); margin-bottom: 12px; overflow-x: auto; }
+.toolbar button { flex: none; background: none; border: 0; border-bottom: 3px solid transparent; padding: 8px 2px; margin-bottom: -1px; font: inherit; font-size: 16px; color: var(--muted); cursor: pointer; }
+.toolbar button.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 700; }
 </style>
+<link rel="stylesheet" href="/tools/loan.css">
 </head>
 <body>
 <div class="wrap">
-  <h1>槓桿組合比對</h1>
-  <div class="tabs" id="tabs"></div>
-  <div class="fx">
-    <span>美元匯率（美股換算台幣）1 USD =</span>
-    <input type="number" id="fx" step="any" min="0">
-    <span>TWD</span>
-    <span id="status"></span>
+  <h1>槓桿工具箱</h1>
+  <nav class="toolbar" id="toolbar" aria-label="工具"></nav>
+
+  <!-- 工具一：槓桿組合比對（原本的畫面，內容沒動） -->
+  <div id="view-combo">
+    <div class="tabs" id="tabs"></div>
+    <div class="fx">
+      <span>美元匯率（美股換算台幣）1 USD =</span>
+      <input type="number" id="fx" step="any" min="0">
+      <span>TWD</span>
+      <span id="status"></span>
+    </div>
+    <div id="main"></div>
+    <p class="hint">資料只存在你這台裝置的瀏覽器（localStorage），不會上傳到伺服器。報價僅供參考，非投資建議。</p>
   </div>
-  <div id="main"></div>
-  <p class="hint">資料只存在你這台裝置的瀏覽器（localStorage），不會上傳到伺服器。報價僅供參考，非投資建議。</p>
+
+  <!-- 工具二：換貸試算（畫面由 tools/loan.js 畫進來） -->
+  <div id="view-loan" hidden></div>
 </div>
 
 <script>
@@ -491,5 +504,8 @@ async function updateQuotes(names) {
 document.getElementById('fx').addEventListener('input', e => { S.fx = e.target.value; save(); refresh(); });
 renderAll();
 </script>
+<!-- 之後新增工具：寫一個 tools/xxx.js，再到 tools/toolbox.js 的 TOOLS 清單加一行 -->
+<script src="/tools/loan.js"></script>
+<script src="/tools/toolbox.js"></script>
 </body>
 </html>
