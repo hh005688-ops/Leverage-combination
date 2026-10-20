@@ -278,7 +278,7 @@ function renderPortfolio() {
   const dropCard = el('div', { class: 'card' },
     el('h2', {}, '大盤下跌模擬'),
     el('div', { class: 'slider' },
-      el('input', { type: 'range', min: 0, max: 30, step: 1, value: p.drop, oninput: e => { p.drop = num(e.target.value); save(); refresh(); } }),
+      el('input', { type: 'range', min: 0, max: 50, step: 1, value: p.drop, oninput: e => { p.drop = num(e.target.value); save(); refresh(); } }),
       refs.dropLabel = el('b', {})),
     refs.dropOut = el('div', { class: 'stats', style: 'margin-top:10px' }),
     el('p', { class: 'hint' }, '淨值變動 ＝ 總資產 × Beta × 跌幅 ÷ 淨值。總資產先扣掉負債後才除以淨值，所以借越多、風險越大。'));
